@@ -6,16 +6,19 @@ import os
 
 # === CONFIGURATION ===
 USER_FILES = [
-    ("/Users/jurejuvan/PycharmProjects/PythonProject/User_Excel_Files/User36_standardized.xlsx", 36),
-    ("/Users/jurejuvan/PycharmProjects/PythonProject/User_Excel_Files/User46_standardized.xlsx", 46),
-    ("/Users/jurejuvan/PycharmProjects/PythonProject/User_Excel_Files/User48_standardized.xlsx", 48),
-    ("/Users/jurejuvan/PycharmProjects/PythonProject/User_Excel_Files/User49_standardized.xlsx", 49),
-    ("/Users/jurejuvan/PycharmProjects/PythonProject/User_Excel_Files/User51_standardized.xlsx", 51),
+    ("./User_Excel_Files/User36_standardized.xlsx", 36),
+    ("./User_Excel_Files/User46_standardized.xlsx", 46),
+    ("./User_Excel_Files/User48_standardized.xlsx", 48),
+    ("./User_Excel_Files/User49_standardized.xlsx", 49),
+    ("./User_Excel_Files/User51_standardized.xlsx", 51),
 ]
 
-MUSICXML_DIR = "/Users/jurejuvan/PycharmProjects/PythonProject/Split_Songs"
+MUSICXML_DIR = "./Split_Songs"
 OUTPUT_ROOT = "Jaccard_SVGs_by_UserPair"
 os.makedirs(OUTPUT_ROOT, exist_ok=True)
+
+# --- CONFIGURABLE PARAMETER ---
+NEIGHBORHOOD_SIZE = 2  # Allows similarity credit for patterns starting within +/- 2 measures
 
 
 # === HELPER FUNCTIONS ===
@@ -43,7 +46,20 @@ def jaccard(set_a, set_b):
     return len(set_a & set_b) / len(set_a | set_b)
 
 
-# === LOAD USER DATA ===
+def expand_measures(measure_set, neighborhood_size):
+    """
+    Expands a set of measures to include neighbors within a specified range,
+    used to calculate a 'Neighborhood Jaccard Similarity'.
+    """
+    expanded_set = set()
+    for measure in measure_set:
+        for i in range(-neighborhood_size, neighborhood_size + 1):
+            if measure + i > 0:
+                expanded_set.add(measure + i)
+    return expanded_set
+
+
+# === LOAD AND PROCESS USER DATA ===
 df_list = []
 for path, uid in USER_FILES:
     if os.path.exists(path):
@@ -65,11 +81,22 @@ if "xml_file" not in df.columns:
 
 # Normalize XML names for consistent lookup
 df["xml_norm"] = df["xml_file"].apply(normalize_xml_name)
-xml_user_map = df.groupby("xml_norm")["user_id"].apply(set).to_dict()
+
+# --- Extract Annotated Measures ---
+xml_user_measures_map = {}
+for xml_norm, group_df in df.groupby("xml_norm"):
+    user_measures = {}
+    for user_id, user_group in group_df.groupby("user_id"):
+        # CRITICAL ASSUMPTION: 'start_measure' is the column name for the pattern's starting measure
+        if 'start_measure' in user_group.columns:
+            measures = user_group["start_measure"].dropna().astype(int).tolist()
+            user_measures[user_id] = set(measures)
+
+    xml_user_measures_map[xml_norm] = user_measures
+# -----------------------------------
 
 users = sorted(df["user_id"].unique())
 user_pairs = list(itertools.combinations(users, 2))
-
 
 # === MUSICXML LIST ===
 musicxml_files = [
@@ -97,60 +124,106 @@ musicxml_files = [
     "021_Mozart_-_Sonata_K_282_Mvt_2.xml"
 ]
 
-
 # === PROCESS EACH MUSICXML ===
 for xml_filename in musicxml_files:
     xml_path = os.path.join(MUSICXML_DIR, xml_filename)
     xml_norm = normalize_xml_name(xml_filename)
+    print("=======================================================================================")
 
     if not os.path.exists(xml_path):
         print(f"⚠️ Skipping missing XML: {xml_filename}")
         continue
 
     print(f"\n🎼 Processing: {xml_filename}")
+
+    song_measures_map = xml_user_measures_map.get(xml_norm, {})
+
+    # --- Initial Verovio Setup (No highlights yet) ---
     tk = setup_verovio()
     tk.loadFile(xml_path)
     num_pages = tk.getPageCount()
-
     if num_pages == 0:
         print(f"⚠️ No pages rendered for {xml_filename}. Adjusting settings...")
         tk.setOptions({"scale": 40, "pageWidth": 2000, "pageHeight": 2800})
         tk.loadFile(xml_path)
         num_pages = tk.getPageCount()
 
-    if xml_norm not in xml_user_map:
-        print(f"⚠️ No user data found for {xml_filename} — neutral rendering.")
-        users_in_xml = set()
-    else:
-        users_in_xml = xml_user_map[xml_norm]
-
-    print(users_in_xml)
-
-    # === PROCESS EACH USER PAIR ===
+    # === PROCESS EACH USER PAIR (Modified Inner Loop) ===
     for u1, u2 in user_pairs:
         pair_dir = os.path.join(OUTPUT_ROOT, f"{u1}_{u2}", xml_norm)
         os.makedirs(pair_dir, exist_ok=True)
 
-        j = jaccard(users_in_xml & {u1, u2}, {u1, u2})
+        # 1. GET MEASURES: Retrieve the set of measures annotated by each user
+        measures_u1_raw = song_measures_map.get(u1, set())
+        measures_u2_raw = song_measures_map.get(u2, set())
 
-        # Normalize single Jaccard value (for uniformity)
-        val = float(j)
-        r = int(255 * val)
-        g = int(255 * val)
-        b = int(255 * (1 - val))
-        color_pair = f"rgb({r},{g},{b})"
+        # 2. CALCULATE NEIGHBORHOOD JACCARD:
 
-        # Reload clean version of XML for each pair
+        # A. Expand the raw sets based on NEIGHBORHOOD_SIZE
+        measures_u1_expanded = expand_measures(measures_u1_raw, NEIGHBORHOOD_SIZE)
+        measures_u2_expanded = expand_measures(measures_u2_raw, NEIGHBORHOOD_SIZE)
+
+        # B. Calculate Jaccard on the expanded sets
+        jaccard_val = jaccard(measures_u1_expanded, measures_u2_expanded)
+
+        # 3. IDENTIFY HIGHLIGHTS: Use the raw sets for the actual visual intersection
+        # We only highlight measures that one user *actually* annotated and the other user
+        # *also* annotated or annotated nearby. A simple intersection of raw measures is used
+        # to prevent highlighting measures that *neither* user annotated.
+
+        # The measures to highlight will be the measures annotated by U1 that are near a measure annotated by U2, AND vice-versa.
+        # This is more complex than a simple raw intersection, so we define a 'highlightable' set:
+
+        # Set of measures annotated by U1 that overlap with U2's expanded set
+        intersection_u1 = measures_u1_raw & measures_u2_expanded
+        # Set of measures annotated by U2 that overlap with U1's expanded set
+        intersection_u2 = measures_u2_raw & measures_u1_expanded
+
+        # The total set of measures that are considered "similar"
+        highlight_measures = list(intersection_u1 | intersection_u2)
+
+        # 4. COLORING SCHEME: Based on the new, smoothed Jaccard value
+
+        val = float(jaccard_val)
+        # Low similarity (0) = Blue (R:0, G:0, B:255)
+        # High similarity (1) = Yellow (R:255, G:255, B:0)
+        r_val = int(255 * val)
+        g_val = int(255 * val)
+        b_val = int(255 * (1 - val))
+        highlight_color = f"rgb({r_val},{g_val},{b_val})"
+
+        # 5. APPLY HIGHLIGHTING
+
+        # Reload clean version of XML and reset highlights
         tk.loadFile(xml_path)
+        tk.setOptions({"highlighted": []})
 
-        # Apply color globally (all measures)
-        mei_str = tk.getMEI()
-        if users_in_xml:
-            print(f"✅ Found user data for {xml_filename} (Jaccard={val:.2f})")
+        if highlight_measures:
+            highlights = []
+            # The set of unique measures to highlight (to avoid duplicate IDs)
+            unique_highlight_measures = set(highlight_measures)
+
+            for measure_num in unique_highlight_measures:
+                mei_id = f"m{measure_num}"
+
+                highlights.append({
+                    "id": mei_id,
+                    "color": highlight_color,
+                    "opacity": 0.5,
+                    "fill": True,
+                    "region": True
+                })
+
+            tk.setOptions({"highlighted": highlights})
+
+            print(
+                f"✅ Highlighting {len(unique_highlight_measures)} near-similar measures for {u1}-{u2} (Neighborhood Size={NEIGHBORHOOD_SIZE}). Jaccard={jaccard_val:.4f}")
         else:
-            print(f"⚪ Rendering {xml_filename} neutral — no user data match.")
+            print(
+                f"⚪ No similar patterns found, even with neighborhood search for {u1}-{u2}. Jaccard={jaccard_val:.4f}")
 
-        # Render pages
+        # 6. Render pages
+        num_pages = tk.getPageCount()
         for page in range(1, num_pages + 1):
             svg = tk.renderToSVG(page)
             svg_path = os.path.join(pair_dir, f"page_{page}.svg")
