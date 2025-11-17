@@ -1,0 +1,10 @@
+pattern_tag,pair_index,user36_row_id,user36_pattern_rank,user36_pattern_timestamp,user36_file,user51_row_id,user51_pattern_rank,user51_pattern_timestamp,user51_file
+Pat-1,1,2511,0,1658775339,Pat-1_user36_1.mei,4375,3,1668377072,Pat-1_user51_1.mei
+Pat-1,2,2508,-1,1658775344,Pat-1_user36_2.mei,4378,-1,1668377084,Pat-1_user51_2.mei
+Pat-1.1,1,2510,0,1658775397,Pat-1.1_user36_1.mei,4377,2,1668377088,Pat-1.1_user51_1.mei
+Pat-1.1,2,2509,-1,1658775410,Pat-1.1_user36_2.mei,4376,-1,1668377144,Pat-1.1_user51_2.mei
+Pat-1.2,1,2507,0,1658775407,Pat-1.2_user36_1.mei,4379,2,1668377127,Pat-1.2_user51_1.mei
+Pat-1.2,2,2512,-1,1658775416,Pat-1.2_user36_2.mei,4380,-1,1668377150,Pat-1.2_user51_2.mei
+Pat-2,1,2515,0,1658775467,Pat-2_user36_1.mei,4381,3,1668377165,Pat-2_user51_1.mei
+Pat-2,2,2517,0,1658775480,Pat-2_user36_2.mei,4384,-1,1668377201,Pat-2_user51_2.mei
+Pat-3,1,2516,0,1658775490,Pat-3_user36_1.mei,4386,3,1668377312,Pat-3_user51_1.mei
